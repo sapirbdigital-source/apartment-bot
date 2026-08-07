@@ -71,7 +71,8 @@ def main():
         if ok:
             passed += 1
             print("    ✅ נשלח:")
-            print("    " + bot.format_message(result, "https://example.com/post").replace("\n", "\n    "))
+            preview = bot.format_message(result, "https://example.com/post", "email")
+            print("    " + preview.replace("\n", "\n    "))
         else:
             print(f"    ⏭️ נדחה: {reason}")
         print()

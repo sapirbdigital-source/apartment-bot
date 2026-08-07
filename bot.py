@@ -260,56 +260,54 @@ def parse_json_response(raw):
     return None
 
 
-# נזכר איזה מודל Gemini באמת עובד, כדי לא לבזבז 404 על כל פוסט
-_gemini_model = [config.GEMINI_MODEL]
+# מודלים שהתגלו כלא-זמינים בהרצה הזו. נזכרים כדי לא לבזבז עליהם
+# קריאה נוספת על כל מודעה.
+_dead_models = set()
 
 
 def analyze_with_gemini(text):
+    """מנסה את המודלים לפי הסדר ב-config.GEMINI_MODELS עד שאחד עונה."""
     if not GEMINI_API_KEY:
         return None
 
-    for attempt in range(2):
-        model = _gemini_model[0]
-        url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{model}:generateContent?key={GEMINI_API_KEY}"
-        )
+    payload = {
+        "contents": [{"parts": [{"text": build_prompt(text)}]}],
+        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.2},
+    }
+
+    for model in config.GEMINI_MODELS:
+        if model in _dead_models:
+            continue
         try:
             resp = requests.post(
-                url,
-                json={
-                    "contents": [{"parts": [{"text": build_prompt(text)}]}],
-                    "generationConfig": {
-                        "responseMimeType": "application/json",
-                        "temperature": 0.2,
-                    },
-                },
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                headers={"x-goog-api-key": GEMINI_API_KEY},
+                json=payload,
                 timeout=90,
             )
         except requests.RequestException as e:
-            log(f"  Gemini: שגיאת רשת ({e})")
+            log(f"  {model}: שגיאת רשת ({e})")
             return None
 
-        if resp.status_code == 404 and attempt == 0 and model != config.GEMINI_MODEL_FALLBACK:
-            log(f"  המודל {model} לא קיים — נופל ל-{config.GEMINI_MODEL_FALLBACK}")
-            _gemini_model[0] = config.GEMINI_MODEL_FALLBACK
+        if resp.status_code == 200:
+            try:
+                raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            except (KeyError, IndexError):
+                return None
+            return parse_json_response(raw)
+
+        if resp.status_code == 404:
+            # גוגל הוציאה את המודל משימוש. לא ינסה אותו שוב בהרצה הזו.
+            _dead_models.add(model)
+            log(f"  {model}: לא זמין יותר — מדלג עליו מכאן והלאה")
             continue
 
         if resp.status_code == 429:
-            # חריגה ממכסת החינם. Groq יתפוס את זה — אבל אם זה חוזר,
-            # צריך להעלות את SLEEP_BETWEEN_CALLS או להוריד MAX_POSTS_PER_RUN.
-            log("  Gemini: 429 — נגמרה המכסה החינמית, עובר ל-Groq")
-            return None
+            log(f"  {model}: המכסה מוצתה — מנסה את המודל הבא")
+            continue
 
-        if resp.status_code != 200:
-            log(f"  Gemini: קוד {resp.status_code}")
-            return None
-
-        try:
-            raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-        except (KeyError, IndexError):
-            return None
-        return parse_json_response(raw)
+        log(f"  {model}: קוד {resp.status_code}")
+        return None
 
     return None
 
