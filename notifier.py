@@ -2,14 +2,19 @@
 """
 שליחת ההתראות. תומך בכמה ערוצים, ונופל מאחד לשני לפי הסדר ב-config.NOTIFY_CHANNELS.
 
-הערוצים:
-  callmebot  — וואטסאפ. הכי פשוט להקמה, שירות חינמי לשימוש אישי.
-  green      — וואטסאפ דרך Green API. יציב יותר, דורש סריקת QR.
-  telegram   — נשאר בקוד כגיבוי אם וואטסאפ ייפול.
+הערוצים, מהפשוט להקמה למסובך:
+  email      — מייל דרך SMTP. אין אפליקציה, אין סשן שמתנתק, אין חשבון חדש.
+               ספרייה סטנדרטית של פייתון. ברירת המחדל.
+  ntfy       — פוש לנייד דרך ntfy.sh. בלי חשבון ובלי API key בכלל.
+  green      — וואטסאפ דרך Green API. דורש QR וטלפון מחובר.
+  callmebot  — וואטסאפ, שירות חינמי לשימוש אישי.
+  telegram   — טלגרם.
 """
 
 import os
-import urllib.parse
+import smtplib
+import ssl
+from email.message import EmailMessage
 
 import requests
 
@@ -21,6 +26,17 @@ CALLMEBOT_APIKEY = os.environ.get("CALLMEBOT_APIKEY", "").strip()
 GREEN_INSTANCE_ID = os.environ.get("GREEN_API_INSTANCE_ID", "").strip()
 GREEN_TOKEN = os.environ.get("GREEN_API_TOKEN", "").strip()
 GREEN_URL = os.environ.get("GREEN_API_URL", "https://api.green-api.com").strip().rstrip("/")
+
+# --- מייל ---
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com").strip()
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587").strip() or 587)
+SMTP_USER = os.environ.get("SMTP_USER", "").strip()
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "").strip()
+EMAIL_TO = os.environ.get("EMAIL_TO", "").strip()
+
+# --- ntfy.sh ---
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
+NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh").strip().rstrip("/")
 
 # --- טלגרם ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
@@ -36,14 +52,61 @@ def normalize_phone(raw):
 
 
 def bold(text, channel):
-    """וואטסאפ משתמש בכוכביות, טלגרם ב-HTML."""
+    """כל ערוץ והסימון שלו. מייל ו-ntfy הם טקסט נקי — סימני הדגשה רק יפריעו."""
     if channel == "telegram":
         return f"<b>{text}</b>"
-    return f"*{text}*"
+    if channel in ("green", "callmebot"):
+        return f"*{text}*"
+    return text
 
 
 # ---------------------------------------------------------------------------
-def _send_callmebot(text):
+def _send_email(text, subject=None):
+    if not (SMTP_USER and SMTP_PASSWORD and EMAIL_TO):
+        return False, "חסר SMTP_USER / SMTP_PASSWORD / EMAIL_TO"
+
+    msg = EmailMessage()
+    msg["Subject"] = subject or "דירות חדשות"
+    msg["From"] = SMTP_USER
+    msg["To"] = EMAIL_TO
+    msg.set_content(text)
+
+    try:
+        if SMTP_PORT == 465:
+            server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT,
+                                      context=ssl.create_default_context(), timeout=45)
+        else:
+            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=45)
+            server.starttls(context=ssl.create_default_context())
+        with server:
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+    except smtplib.SMTPAuthenticationError:
+        return False, "התחברות נדחתה — ב-Gmail צריך App Password, לא סיסמת החשבון"
+    except (smtplib.SMTPException, OSError) as e:
+        return False, f"{type(e).__name__}: {e}"
+    return True, None
+
+
+def _send_ntfy(text, subject=None):
+    if not NTFY_TOPIC:
+        return False, "חסר NTFY_TOPIC"
+    headers = {"Content-Type": "text/plain; charset=utf-8"}
+    if subject:
+        # כותרות HTTP חייבות להיות ASCII, אז כותרת עברית חייבת קידוד RFC 2047
+        headers["Title"] = "=?UTF-8?B?" + __import__("base64").b64encode(
+            subject.encode("utf-8")).decode("ascii") + "?="
+    try:
+        resp = requests.post(f"{NTFY_SERVER}/{NTFY_TOPIC}",
+                             data=text.encode("utf-8"), headers=headers, timeout=45)
+    except requests.RequestException as e:
+        return False, f"שגיאת רשת: {e}"
+    if resp.status_code != 200:
+        return False, f"קוד {resp.status_code}: {resp.text[:150]}"
+    return True, None
+
+
+def _send_callmebot(text, subject=None):
     if not (CALLMEBOT_APIKEY and WHATSAPP_TO):
         return False, "חסר CALLMEBOT_APIKEY או WHATSAPP_TO"
     try:
@@ -70,7 +133,7 @@ def _send_callmebot(text):
     return True, None  # ברירת מחדל אופטימית — 200 בלי שגיאה מפורשת
 
 
-def _send_green(text):
+def _send_green(text, subject=None):
     if not (GREEN_INSTANCE_ID and GREEN_TOKEN and WHATSAPP_TO):
         return False, "חסרים פרטי Green API או WHATSAPP_TO"
     url = f"{GREEN_URL}/waInstance{GREEN_INSTANCE_ID}/sendMessage/{GREEN_TOKEN}"
@@ -88,7 +151,7 @@ def _send_green(text):
     return True, None
 
 
-def _send_telegram(text):
+def _send_telegram(text, subject=None):
     if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
         return False, "חסר TELEGRAM_TOKEN או TELEGRAM_CHAT_ID"
     try:
@@ -111,26 +174,30 @@ def _send_telegram(text):
 
 
 SENDERS = {
+    "email": _send_email,
+    "ntfy": _send_ntfy,
     "callmebot": _send_callmebot,
     "green": _send_green,
     "telegram": _send_telegram,
 }
 
+# מה חייב להיות מוגדר כדי שהערוץ ייחשב זמין
+REQUIREMENTS = {
+    "email":     lambda: bool(SMTP_USER and SMTP_PASSWORD and EMAIL_TO),
+    "ntfy":      lambda: bool(NTFY_TOPIC),
+    "green":     lambda: bool(GREEN_INSTANCE_ID and GREEN_TOKEN and WHATSAPP_TO),
+    "callmebot": lambda: bool(CALLMEBOT_APIKEY and WHATSAPP_TO),
+    "telegram":  lambda: bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID),
+}
+
 
 def configured_channels():
     """רק ערוצים שבאמת יש להם סודות מוגדרים."""
-    ready = []
-    for ch in config.NOTIFY_CHANNELS:
-        if ch == "callmebot" and CALLMEBOT_APIKEY and WHATSAPP_TO:
-            ready.append(ch)
-        elif ch == "green" and GREEN_INSTANCE_ID and GREEN_TOKEN and WHATSAPP_TO:
-            ready.append(ch)
-        elif ch == "telegram" and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-            ready.append(ch)
-    return ready
+    return [ch for ch in config.NOTIFY_CHANNELS
+            if ch in REQUIREMENTS and REQUIREMENTS[ch]()]
 
 
-def send(build_text, log=print):
+def send(build_text, log=print, subject=None):
     """
     build_text(channel) -> str
     מנסה כל ערוץ לפי הסדר עד שאחד מצליח. מחזיר (הצליח, שם_הערוץ).
@@ -141,7 +208,7 @@ def send(build_text, log=print):
         return False, None
 
     for ch in channels:
-        ok, err = SENDERS[ch](build_text(ch))
+        ok, err = SENDERS[ch](build_text(ch), subject)
         if ok:
             return True, ch
         log(f"  {ch} נכשל: {err}")

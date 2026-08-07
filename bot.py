@@ -396,16 +396,48 @@ def format_message(r, url, channel="green"):
     return "\n".join(lines)
 
 
-def send_alert(result, url):
-    """מנסה את ערוצי השליחה לפי הסדר. מחזיר True אם אחד מהם הצליח."""
+def _deliver(build_text, subject, preview):
+    """עוטף את notifier.send — מטפל ב-dry run ומדווח על נפילה לערוץ משני."""
     if DRY_RUN:
-        log("--- [DRY RUN] היה נשלח: ---\n"
-            + format_message(result, url, "green") + "\n---")
+        log("--- [DRY RUN] היה נשלח: ---\n" + preview + "\n---")
         return True
-    ok, channel = notifier.send(lambda ch: format_message(result, url, ch), log=log)
-    if ok and channel != config.NOTIFY_CHANNELS[0]:
-        log(f"  ⚠️ נשלח דרך {channel} (הערוץ הראשי לא זמין)")
+    ok, channel = notifier.send(build_text, log=log, subject=subject)
+    if ok:
+        available = notifier.configured_channels()
+        if available and channel != available[0]:
+            log(f"  ⚠️ נשלח דרך {channel} (הערוץ הראשי לא זמין)")
     return ok
+
+
+def send_alert(result, url):
+    """הודעה בודדת על דירה אחת."""
+    return _deliver(
+        lambda ch: format_message(result, url, ch),
+        f"דירה במסגרת התקציב · {result.get('location') or ''}".strip(),
+        format_message(result, url, "email"),
+    )
+
+
+def send_digest(matches):
+    """
+    הודעה אחת מרוכזת עם כל הדירות שנמצאו בהרצה.
+    matches: רשימת (result, url).
+    """
+    today = datetime.now().strftime("%d.%m")
+    count = len(matches)
+    title = "נמצאה דירה אחת" if count == 1 else f"נמצאו {count} דירות"
+
+    def build(ch):
+        parts = [f"{title} · {today}", ""]
+        for n, (result, url) in enumerate(matches, start=1):
+            if count > 1:
+                parts.append(f"[{n}/{count}]")
+            parts.append(format_message(result, url, ch))
+            if n < count:
+                parts.append("\n" + "─" * 28 + "\n")
+        return "\n".join(parts)
+
+    return _deliver(build, f"{title} · {today}", build("email"))
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +493,7 @@ def main():
 
     sent = rejected = failed = 0
     now = datetime.now(timezone.utc).isoformat()
+    pending = []  # (key, result, url) — ממתינים לדייג'סט בסוף
 
     for i, (key, text, url) in enumerate(queue, start=1):
         result = analyze_with_gemini(text)
@@ -479,6 +512,10 @@ def main():
         if not ok:
             rejected += 1
             log(f"[{i}/{len(queue)}] ⏭️ {reason}")
+        elif config.DIGEST:
+            pending.append((key, result, url))
+            log(f"[{i}/{len(queue)}] ✅ התאמה — {result.get('location')} "
+                f"{result.get('price')} ₪")
         else:
             if send_alert(result, url):
                 sent += 1
@@ -489,6 +526,17 @@ def main():
                 del seen[key]  # לא נשלח בפועל — שיינתן צ'אנס נוסף
 
         time.sleep(config.SLEEP_BETWEEN_CALLS)
+
+    if pending:
+        log(f"\nשולח דייג'סט עם {len(pending)} דירות...")
+        if send_digest([(r, u) for _, r, u in pending]):
+            sent = len(pending)
+        else:
+            failed += len(pending)
+            # הדייג'סט לא יצא — לשכוח אותן כדי שינותחו וישלחו שוב מחר
+            for key, _, _ in pending:
+                seen.pop(key, None)
+            log("❌ הדייג'סט נכשל. הדירות יישלחו שוב בהרצה הבאה.")
 
     if not DRY_RUN:
         save_seen(seen)
