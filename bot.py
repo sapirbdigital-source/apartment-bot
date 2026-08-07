@@ -426,22 +426,44 @@ def send_digest(matches):
     """
     הודעה אחת מרוכזת עם כל הדירות שנמצאו בהרצה.
     matches: רשימת (result, url).
+
+    מפוצל לשני חלקים. רוב מודעות ההשכרה בקבוצות לא מציינות מחיר
+    ("לפרטים בפרטי"), ולכן אי אפשר לאמת אותן מול התקציב — הן נשלחות
+    בנפרד, מסומנות מפורשות כדורשות בירור, כדי שלא ייראו כמאומתות.
     """
     today = datetime.now().strftime("%d.%m")
-    count = len(matches)
-    title = "נמצאה דירה אחת" if count == 1 else f"נמצאו {count} דירות"
+    priced = [m for m in matches if m[0].get("price") is not None]
+    unpriced = [m for m in matches if m[0].get("price") is None]
+
+    bits = []
+    if priced:
+        bits.append(f"{len(priced)} בתקציב")
+    if unpriced:
+        bits.append(f"{len(unpriced)} לבדיקה")
+    subject = " · ".join([" + ".join(bits) or "דירות", today])
+
+    def section(header, group, ch):
+        out = ["", f"── {header} ──", ""]
+        for n, (result, url) in enumerate(group, start=1):
+            if len(group) > 1:
+                out.append(f"[{n}/{len(group)}]")
+            out.append(format_message(result, url, ch))
+            if n < len(group):
+                out.append("\n" + "─" * 28 + "\n")
+        return out
 
     def build(ch):
-        parts = [f"{title} · {today}", ""]
-        for n, (result, url) in enumerate(matches, start=1):
-            if count > 1:
-                parts.append(f"[{n}/{count}]")
-            parts.append(format_message(result, url, ch))
-            if n < count:
-                parts.append("\n" + "─" * 28 + "\n")
+        total = len(matches)
+        parts = ["נמצאה דירה אחת" if total == 1 else f"נמצאו {total} דירות"]
+        if priced:
+            parts += section("במסגרת התקציב", priced, ch)
+        if unpriced:
+            parts += section("ללא מחיר במודעה · לבדיקה ידנית", unpriced, ch)
+            parts += ["", "המודעות האלה לא ציינו מחיר, ולכן לא נבדקו מול התקציב.",
+                      "שווה לשאול בפרטי לפני שממשיכים."]
         return "\n".join(parts)
 
-    return _deliver(build, f"{title} · {today}", build("email"))
+    return _deliver(build, subject, build("email"))
 
 
 # ---------------------------------------------------------------------------
