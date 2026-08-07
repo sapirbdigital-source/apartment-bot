@@ -37,7 +37,9 @@ def env(name, default=""):
 SMTP_HOST = env("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(env("SMTP_PORT", "587"))
 SMTP_USER = env("SMTP_USER")
-SMTP_PASSWORD = env("SMTP_PASSWORD")
+# גוגל מציגה App Password כ-"abcd efgh ijkl mnop". הרווחים הם לקריאוּת בלבד
+# ואינם חלק מהסיסמה — עם רווחים ההתחברות נכשלת ב-535.
+SMTP_PASSWORD = "".join(env("SMTP_PASSWORD").split())
 EMAIL_TO = env("EMAIL_TO")
 
 # --- ntfy.sh ---
