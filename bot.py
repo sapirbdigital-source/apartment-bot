@@ -295,6 +295,12 @@ def analyze_with_gemini(text):
             _gemini_model[0] = config.GEMINI_MODEL_FALLBACK
             continue
 
+        if resp.status_code == 429:
+            # חריגה ממכסת החינם. Groq יתפוס את זה — אבל אם זה חוזר,
+            # צריך להעלות את SLEEP_BETWEEN_CALLS או להוריד MAX_POSTS_PER_RUN.
+            log("  Gemini: 429 — נגמרה המכסה החינמית, עובר ל-Groq")
+            return None
+
         if resp.status_code != 200:
             log(f"  Gemini: קוד {resp.status_code}")
             return None
