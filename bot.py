@@ -265,8 +265,8 @@ def parse_json_response(raw):
 _dead_models = set()
 
 
-def analyze_with_gemini(text):
-    """מנסה את המודלים לפי הסדר ב-config.GEMINI_MODELS עד שאחד עונה."""
+def analyze_with_gemini(text, models=None):
+    """מנסה את המודלים לפי הסדר עד שאחד עונה."""
     if not GEMINI_API_KEY:
         return None
 
@@ -275,7 +275,7 @@ def analyze_with_gemini(text):
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.2},
     }
 
-    for model in config.GEMINI_MODELS:
+    for model in (models if models is not None else config.GEMINI_MODELS):
         if model in _dead_models:
             continue
         try:
@@ -500,9 +500,13 @@ def main():
     pending = []  # (key, result, url) — ממתינים לדייג'סט בסוף
 
     for i, (key, text, url) in enumerate(queue, start=1):
+        # סדר לפי איכות, לא לפי נוחות: Gemini הראשי, אחריו Groq, ורק
+        # במוצא אחרון המודל הקל — שנמדד כמחמיר מדי ודוחה דירות תקפות.
         result = analyze_with_gemini(text)
         if result is None:
             result = analyze_with_groq(text)
+        if result is None:
+            result = analyze_with_gemini(text, models=config.GEMINI_LAST_RESORT)
 
         if result is None:
             failed += 1
