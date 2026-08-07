@@ -1,0 +1,29 @@
+name: WhatsApp Test
+
+# הרצה ידנית בלבד — שולח הודעת בדיקה אחת כדי לוודא שהחיבור עובד.
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -r requirements.txt
+
+      - name: Send test message
+        env:
+          WHATSAPP_TO:           ${{ secrets.WHATSAPP_TO }}
+          GREEN_API_INSTANCE_ID: ${{ secrets.GREEN_API_INSTANCE_ID }}
+          GREEN_API_TOKEN:       ${{ secrets.GREEN_API_TOKEN }}
+          GREEN_API_URL:         ${{ secrets.GREEN_API_URL }}
+          CALLMEBOT_APIKEY:      ${{ secrets.CALLMEBOT_APIKEY }}
+          TELEGRAM_TOKEN:        ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONIOENCODING: utf-8
+        run: python test_whatsapp.py

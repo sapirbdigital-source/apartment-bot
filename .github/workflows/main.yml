@@ -1,0 +1,62 @@
+name: Sapir Apartment Bot
+
+on:
+  schedule:
+    # שעון UTC. בקיץ (שעון קיץ ישראל = UTC+3): 05:00 -> 08:00, 15:00 -> 18:00
+    # בחורף (UTC+2) זה יזוז לשעה 07:00 ו-17:00. לא קריטי.
+    - cron: '0 5,15 * * *'
+  workflow_dispatch:
+
+# שתי הרצות במקביל ידרסו אחת את השנייה ב-seen.json
+concurrency:
+  group: apartment-bot
+  cancel-in-progress: false
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    # נדרש כדי לשמור בחזרה את data/seen.json
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -r requirements.txt
+
+      - name: Run bot
+        env:
+          APIFY_TOKEN_1:   ${{ secrets.APIFY_TOKEN_1 }}
+          APIFY_TASK_ID_1: ${{ secrets.APIFY_TASK_ID_1 }}
+          APIFY_TOKEN_2:   ${{ secrets.APIFY_TOKEN_2 }}
+          APIFY_TASK_ID_2: ${{ secrets.APIFY_TASK_ID_2 }}
+          APIFY_TOKEN_3:   ${{ secrets.APIFY_TOKEN_3 }}
+          APIFY_TASK_ID_3: ${{ secrets.APIFY_TASK_ID_3 }}
+          GEMINI_API_KEY:  ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY:    ${{ secrets.GROQ_API_KEY }}
+          # וואטסאפ — ערוץ ראשי
+          WHATSAPP_TO:           ${{ secrets.WHATSAPP_TO }}
+          GREEN_API_INSTANCE_ID: ${{ secrets.GREEN_API_INSTANCE_ID }}
+          GREEN_API_TOKEN:       ${{ secrets.GREEN_API_TOKEN }}
+          GREEN_API_URL:         ${{ secrets.GREEN_API_URL }}
+          # גיבויים
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONIOENCODING: utf-8
+        run: python bot.py
+
+      # שומר את זיכרון הכפילויות. כבונוס — כל קומיט כזה מחדש את
+      # מד ה-60-יום של GitHub, כך שה-schedule לא יושבת אוטומטית.
+      - name: Persist seen.json
+        if: always()
+        run: |
+          git config user.name  "apartment-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/seen.json
+          git diff --staged --quiet || git commit -m "chore: update seen listings [skip ci]"
+          git push
