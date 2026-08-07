@@ -20,27 +20,40 @@ import requests
 
 import config
 
-# --- וואטסאפ ---
-WHATSAPP_TO = os.environ.get("WHATSAPP_TO", "").strip()          # 972501234567
-CALLMEBOT_APIKEY = os.environ.get("CALLMEBOT_APIKEY", "").strip()
-GREEN_INSTANCE_ID = os.environ.get("GREEN_API_INSTANCE_ID", "").strip()
-GREEN_TOKEN = os.environ.get("GREEN_API_TOKEN", "").strip()
-GREEN_URL = os.environ.get("GREEN_API_URL", "https://api.green-api.com").strip().rstrip("/")
+# --- וואטסאפ (מוגדר אחרי env(), ראה למטה) ---
+
+def env(name, default=""):
+    """
+    כמו os.environ.get, אבל מחזיר את ברירת המחדל גם כשהערך ריק ולא רק כשהוא חסר.
+
+    GitHub Actions מעביר כל Secret שלא הוגדר כמחרוזת ריקה, לא כמשתנה נעדר.
+    לכן os.environ.get(name, default) לא מחזיר את ברירת המחדל שם, וההגדרה
+    יוצאת ריקה — מה שהפיל את ntfy עם 'Invalid URL' ואת SMTP עם host ריק.
+    """
+    return (os.environ.get(name) or "").strip() or default
+
 
 # --- מייל ---
-SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com").strip()
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587").strip() or 587)
-SMTP_USER = os.environ.get("SMTP_USER", "").strip()
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "").strip()
-EMAIL_TO = os.environ.get("EMAIL_TO", "").strip()
+SMTP_HOST = env("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(env("SMTP_PORT", "587"))
+SMTP_USER = env("SMTP_USER")
+SMTP_PASSWORD = env("SMTP_PASSWORD")
+EMAIL_TO = env("EMAIL_TO")
 
 # --- ntfy.sh ---
-NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
-NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh").strip().rstrip("/")
+NTFY_TOPIC = env("NTFY_TOPIC")
+NTFY_SERVER = env("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+
+# --- וואטסאפ ---
+WHATSAPP_TO = env("WHATSAPP_TO")                  # 972501234567
+CALLMEBOT_APIKEY = env("CALLMEBOT_APIKEY")
+GREEN_INSTANCE_ID = env("GREEN_API_INSTANCE_ID")
+GREEN_TOKEN = env("GREEN_API_TOKEN")
+GREEN_URL = env("GREEN_API_URL", "https://api.green-api.com").rstrip("/")
 
 # --- טלגרם ---
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_TOKEN = env("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = env("TELEGRAM_CHAT_ID")
 
 
 def normalize_phone(raw):
