@@ -65,22 +65,47 @@ def save_seen(seen):
 
 
 def post_key(text, url):
-    """מזהה יציב לפוסט. עדיף URL; אם אין — טביעת אצבע של הטקסט."""
+    """
+    מזהה יציב לפוסט — לפי הטקסט, לא לפי ה-URL.
+
+    מתווכים מפרסמים את אותה מודעה בכמה קבוצות, ולפעמים פעמיים באותה קבוצה.
+    לכל עותק יש permalink אחר, אז מפתח לפי URL היה שולח את אותה דירה שוב ושוב.
+    נמדד בפועל: אותו טקסט הופיע 3 פעמים עם 3 כתובות שונות.
+    """
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    if len(normalized) >= config.MIN_POST_LENGTH:
+        return "sha1:" + hashlib.sha1(normalized[:300].encode("utf-8")).hexdigest()
+    # טקסט קצר מדי מכדי לזהות לפיו — נופלים ל-URL
     if url:
         return url.split("?")[0]
-    normalized = re.sub(r"\s+", " ", text).strip()[:300]
     return "sha1:" + hashlib.sha1(normalized.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
 # Apify — שליפת פוסטים מקבוצות פייסבוק
 # ---------------------------------------------------------------------------
+TEXT_FIELDS = ("text", "postText", "message", "content", "body", "full_text", "description")
+
+
 def extract_text(item):
-    """שמות השדות משתנים בין אקטורים שונים של Apify."""
-    for field in ("text", "postText", "message", "content", "body", "full_text", "description"):
+    """
+    שמות השדות משתנים בין אקטורים שונים של Apify.
+
+    כשמישהו *משתף* מודעה של אחר, ה-text ברמה העליונה ריק והתוכן האמיתי
+    יושב ב-sharedPost. בלי הנפילה הזו מודעות אמיתיות נזרקות כ"קצרות מדי".
+    """
+    for field in TEXT_FIELDS:
         val = item.get(field)
         if val and str(val).strip():
             return str(val).strip()
+
+    shared = item.get("sharedPost")
+    if isinstance(shared, dict):
+        for field in TEXT_FIELDS:
+            val = shared.get(field)
+            if val and str(val).strip():
+                return str(val).strip()
+
     return ""
 
 
@@ -405,8 +430,16 @@ def main():
 
     # סינון מקומי לפני שמבזבזים קריאות AI
     queue = []
-    stats = {"short": 0, "dup": 0}
+    stats = {"short": 0, "dup": 0, "blocked": 0}
     for item in items:
+        # קבוצה סגורה מחזירה פריט-שגיאה במקום פוסטים. שווה להצעיק את זה,
+        # אחרת זה נראה כאילו פשוט אין מודעות חדשות.
+        if item.get("error"):
+            stats["blocked"] += 1
+            log(f"⚠️ קבוצה לא נגישה: {item.get('url', '?')}")
+            log(f"   {item.get('errorDescription') or item['error']}")
+            continue
+
         text = extract_text(item)
         url = extract_url(item)
         if len(text) < config.MIN_POST_LENGTH:
@@ -423,7 +456,8 @@ def main():
             f"הראשונים. השאר יטופלו בהרצה הבאה.")
         queue = queue[: config.MAX_POSTS_PER_RUN]
 
-    log(f"לניתוח: {len(queue)} | כפולים: {stats['dup']} | קצרים מדי: {stats['short']}")
+    log(f"לניתוח: {len(queue)} | כפולים: {stats['dup']} | קצרים מדי: {stats['short']}"
+        + (f" | קבוצות חסומות: {stats['blocked']}" if stats["blocked"] else ""))
 
     sent = rejected = failed = 0
     now = datetime.now(timezone.utc).isoformat()
@@ -460,7 +494,7 @@ def main():
         save_seen(seen)
 
     log(f"\n📊 סיכום: נשלחו {sent} | נדחו {rejected} | נכשלו {failed} | "
-        f"כפולים {stats['dup']} | קצרים {stats['short']}")
+        f"כפולים {stats['dup']} | קצרים {stats['short']} | חסומות {stats['blocked']}")
 
 
 if __name__ == "__main__":
