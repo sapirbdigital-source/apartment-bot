@@ -303,7 +303,10 @@ def analyze_with_gemini(text, models=None):
             continue
 
         if resp.status_code == 429:
-            log(f"  {model}: המכסה מוצתה — מנסה את המודל הבא")
+            # מכסה יומית לא מתאוששת באמצע הרצה. בלי הסימון הזה כל מודעה
+            # מבזבזת עוד קריאה כושלת — נמדד בלוגים: עד 31 בהרצה אחת.
+            _dead_models.add(model)
+            log(f"  {model}: המכסה מוצתה — לא ינוסה שוב בהרצה הזו")
             continue
 
         log(f"  {model}: קוד {resp.status_code}")
